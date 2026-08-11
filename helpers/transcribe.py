@@ -30,7 +30,7 @@ import requests
 SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 
 
-def load_api_key() -> str:
+def load_api_key(required: bool = True) -> str:
     for candidate in [Path(__file__).resolve().parent.parent / ".env", Path(".env")]:
         if candidate.exists():
             for line in candidate.read_text().splitlines():
@@ -39,11 +39,26 @@ def load_api_key() -> str:
                     continue
                 k, v = line.split("=", 1)
                 if k.strip() == "ELEVENLABS_API_KEY":
-                    return v.strip().strip('"').strip("'")
+                    key = v.strip().strip('"').strip("'")
+                    if key:
+                        return key
     v = os.environ.get("ELEVENLABS_API_KEY", "")
-    if not v:
+    if not v and required:
         sys.exit("ELEVENLABS_API_KEY not found in .env or environment")
     return v
+
+
+def resolve_backend(backend: str = "auto") -> str:
+    """Resolve 'auto': scribe when an API key is available; else gigaam when
+    its local model is already present (Russian, offline); else whisper."""
+    if backend != "auto":
+        return backend
+    if load_api_key(required=False):
+        return "scribe"
+    import transcribe_gigaam
+    if (transcribe_gigaam.model_dir() / "model.int8.onnx").exists():
+        return "gigaam"
+    return "whisper"
 
 
 def extract_audio(video_path: Path, dest: Path) -> None:
@@ -94,11 +109,25 @@ def transcribe_one(
     language: str | None = None,
     num_speakers: int | None = None,
     verbose: bool = True,
+    backend: str = "scribe",
 ) -> Path:
     """Transcribe a single video. Returns path to transcript JSON.
 
     Cached: returns existing path immediately if the transcript already exists.
+    Backends 'whisper' and 'gigaam' delegate to the local helpers — same
+    output schema, no API key needed.
     """
+    if backend == "whisper":
+        import transcribe_whisper
+        return transcribe_whisper.transcribe_one(
+            video=video, edit_dir=edit_dir, language=language, verbose=verbose,
+        )
+    if backend == "gigaam":
+        import transcribe_gigaam
+        return transcribe_gigaam.transcribe_one(
+            video=video, edit_dir=edit_dir, language=language, verbose=verbose,
+        )
+
     transcripts_dir = edit_dir / "transcripts"
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     out_path = transcripts_dir / f"{video.stem}.json"
@@ -153,6 +182,14 @@ def main() -> None:
         default=None,
         help="Optional number of speakers when known. Improves diarization accuracy.",
     )
+    ap.add_argument(
+        "--backend",
+        choices=["auto", "scribe", "whisper", "gigaam"],
+        default="auto",
+        help="Transcription backend. 'auto' picks scribe when an ElevenLabs key "
+             "is configured, else local gigaam (Russian) when its model is "
+             "present, else local whisper.",
+    )
     args = ap.parse_args()
 
     video = args.video.resolve()
@@ -160,7 +197,8 @@ def main() -> None:
         sys.exit(f"video not found: {video}")
 
     edit_dir = (args.edit_dir or (video.parent / "edit")).resolve()
-    api_key = load_api_key()
+    backend = resolve_backend(args.backend)
+    api_key = load_api_key() if backend == "scribe" else ""
 
     transcribe_one(
         video=video,
@@ -168,6 +206,7 @@ def main() -> None:
         api_key=api_key,
         language=args.language,
         num_speakers=args.num_speakers,
+        backend=backend,
     )
 
 
