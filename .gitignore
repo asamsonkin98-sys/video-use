@@ -61,6 +61,3 @@ project.md
 
 # Local ASR models (downloaded on demand)
 models/
-
-# Persisted project memory lives in git (heavy media stays out via the rules above)
-!projects/**/project.md
