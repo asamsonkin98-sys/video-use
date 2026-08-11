@@ -58,6 +58,12 @@ def extract_frames(video: Path, start: float, end: float, n: int, dest_dir: Path
             str(out),
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not out.exists():
+            # A seek at/after the last frame yields no output — step back a touch.
+            cmd[2] = f"{max(0.0, t - 0.15):.3f}"
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not out.exists():
+            raise RuntimeError(f"no frame extracted at t={t:.3f}s (past end of video?)")
         paths.append(out)
     return paths
 
