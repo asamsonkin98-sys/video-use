@@ -58,3 +58,6 @@ master.srt
 takes_packed.md
 edl.json
 project.md
+
+# Local ASR models (downloaded on demand)
+models/

@@ -20,7 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from transcribe import load_api_key, transcribe_one
+from transcribe import load_api_key, resolve_backend, transcribe_one
 
 
 VIDEO_EXTS = {".mp4", ".MP4", ".mov", ".MOV", ".mkv", ".MKV", ".avi", ".AVI", ".m4v"}
@@ -56,6 +56,14 @@ def main() -> None:
         default=None,
         help="Optional number of speakers. Improves diarization when known.",
     )
+    ap.add_argument(
+        "--backend",
+        choices=["auto", "scribe", "whisper", "gigaam"],
+        default="auto",
+        help="Transcription backend. 'auto' picks scribe when an ElevenLabs key "
+             "is configured, else local gigaam (Russian) when its model is "
+             "present, else local whisper.",
+    )
     args = ap.parse_args()
 
     videos_dir = args.videos_dir.resolve()
@@ -77,13 +85,17 @@ def main() -> None:
         print("nothing to do")
         return
 
-    api_key = load_api_key()
+    backend = resolve_backend(args.backend)
+    api_key = load_api_key() if backend == "scribe" else ""
 
-    print(f"transcribing {len(pending)} files with {args.workers} parallel workers")
+    # Local backends are CPU-bound — parallel workers just thrash; run serially.
+    workers = 1 if backend in ("whisper", "gigaam") else args.workers
+
+    print(f"transcribing {len(pending)} files with {workers} parallel workers ({backend})")
     t0 = time.time()
 
     errors: list[tuple[Path, str]] = []
-    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(
                 transcribe_one,
@@ -93,6 +105,7 @@ def main() -> None:
                 language=args.language,
                 num_speakers=args.num_speakers,
                 verbose=False,
+                backend=backend,
             ): v
             for v in pending
         }
